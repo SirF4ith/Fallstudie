@@ -1,0 +1,267 @@
+---
+title: "Wetteranalyse für die Wahl eines neuen Wohnorts"
+author: "Julien Jäger"
+date: "`r format(Sys.time(), '%d %B %Y')`"
+output:
+  pdf_document: default
+  word_document: default
+  html_document: default
+---
+
+1.  Skript zum Einlesen der Daten und Berechnungen zum Variablitätsscore.
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, fig.width=14)
+
+# Laden der notwendigen Bibliotheken
+library(tidyverse)
+library(lubridate)
+library(dplyr)
+
+```
+
+```{r}
+# Einlesen der Temperaturdaten
+temp_data <- read_csv("data/data_OBS_DEU_P1D_T2M_X.csv",
+                      col_names = c("Produkt_Code", "SDO_ID",
+                                    "Zeitstempel", "Wert", "Qualitaet_Byte",
+                                    "Qualitaet_Niveau"),
+                      skip = 1,
+                      col_types = cols(
+                        Produkt_Code = col_character(),
+                        SDO_ID = col_integer(),
+                        Zeitstempel = col_date(format = "%Y-%m-%d"),
+                        Wert = col_double(),
+                        Qualitaet_Byte = col_integer(),
+                        Qualitaet_Niveau = col_integer()
+                      ))
+
+# Einlesen der Feuchtigkeitsdaten
+humidity_data <- read_csv("data/data_OBS_DEU_P1D_RF.csv",
+                          col_names = c("Produkt_Code", "SDO_ID",
+                                        "Zeitstempel","Wert", "Qualitaet_Byte",
+                                        "Qualitaet_Niveau"),
+                          skip = 1,
+                          col_types = cols(
+                            Produkt_Code = col_character(),
+                            SDO_ID = col_integer(),
+                            Zeitstempel = col_date(format = "%Y-%m-%d"),
+                            Wert = col_double(),
+                            Qualitaet_Byte = col_integer(),
+                            Qualitaet_Niveau = col_integer()
+                          ))
+
+# Einlesen der Windgeschwindigkeitsdaten
+wind_data <- read_csv("data/data_OBS_DEU_P1D_F.csv",
+                      col_names = c("Produkt_Code", "SDO_ID", "Zeitstempel",
+                                    "Wert", "Qualitaet_Byte",
+                                    "Qualitaet_Niveau"),
+                      skip = 1,
+                      col_types = cols(
+                        Produkt_Code = col_character(),
+                        SDO_ID = col_integer(),
+                        Zeitstempel = col_date(format = "%Y-%m-%d"),
+                        Wert = col_double(),
+                        Qualitaet_Byte = col_integer(),
+                        Qualitaet_Niveau = col_integer()
+                      ))
+
+# Einlesen der Stationsmetadaten
+# Hier reicht eine Datei, der drei Dimensionen, da die Stationsnamen
+# und IDs gleich sind
+station_data <- read_csv("data/sdo_OBS_DEU_P1D_F.csv",
+                         col_names = c("SDO_ID", "SDO_Name", "Geogr_Laenge",
+                                       "Geogr_Breite", "Hoehe_ueber_NN",
+                                       "Metadata_Link"),
+                         skip = 1,
+                         col_types = cols(
+                           SDO_ID = col_integer(),
+                           SDO_Name = col_character(),
+                           Geogr_Laenge = col_character(),
+                           Geogr_Breite = col_character(),
+                           Hoehe_ueber_NN = col_double(),
+                           Metadata_Link = col_character()
+                         ))
+
+# Datenaufbereitung: Umbenennen der Spalten und Zusammenführen der Datensätze
+colnames(temp_data) <- c("Product_Code", "Location_ID", "Date", "Temperature",
+                         "Quality_Byte", "Quality_Level")
+colnames(humidity_data) <- c("Product_Code", "Location_ID", "Date", "Humidity",
+                             "Quality_Byte", "Quality_Level")
+colnames(wind_data) <- c("Product_Code", "Location_ID", "Date", "WindSpeed",
+                         "Quality_Byte", "Quality_Level")
+
+# Zusammenführen der Wetterdatensätze
+weather_data <- temp_data %>%
+  select(Location_ID, Date, Temperature) %>%
+  left_join(humidity_data %>% select(Location_ID, Date, Humidity),
+            by = c("Location_ID", "Date")) %>%
+  left_join(wind_data %>% select(Location_ID, Date, WindSpeed),
+            by = c("Location_ID", "Date"))
+
+# Zusammenführen der Wetterdaten mit den Stationsnamen
+weather_data <- weather_data %>%
+  left_join(station_data %>% select(SDO_ID, SDO_Name),
+            by = c("Location_ID" = "SDO_ID"))
+
+# Sortieren nach Stationsnamen 
+# und Berechnung der Standardabweichung für jede Dimension
+variability <- weather_data %>%
+  group_by(SDO_Name) %>%
+  summarise(
+    temp_sd = sd(Temperature, na.rm = TRUE),
+    humidity_sd = sd(Humidity, na.rm = TRUE),
+    wind_sd = sd(WindSpeed, na.rm = TRUE)
+  )
+
+# Berechnung des Variabilitätsscores und als Spalte hinzufügen
+variability <- variability %>%
+  mutate(v_score = temp_sd + humidity_sd + wind_sd)
+
+# Sortierung der Orte nach Variabilitätsscore
+sorted_locations <- variability %>%
+  arrange(v_score)
+
+# Variabilitätsplot
+print(ggplot(sorted_locations, aes(x = reorder(SDO_Name, v_score),
+                                   y = v_score)) +
+  geom_bar(stat = "identity") +
+  coord_flip() +
+  labs(title = "Variabilität der Wetterbedingungen", x = "Ort",
+       y = "Variabilitätsscore")
+)
+
+
+# Ergebnisse anzeigen
+head(sorted_locations, 10)
+
+```
+
+Der Plot zeigt die ausgewählten Orte aus den Daten. Dieser zeigt die ausgewählten zehn Orte, welche anhand des Variablitätsscores sortiert wurden. Somit hat der Ort Schönhagen die niedrigsten kombinierten Abweichungen von der Tageshöchsttemperatur, der mittleren Windgeschwindigkeit und der mittleren relativen Luftfeuchtigkeit.
+
+2.  Skript zum Berechnen der zukünftigen Daten für die nächsten 3 Jahre
+
+```{r}
+
+# Stationsnamen extrahieren
+stations <- unique(weather_data$SDO_Name)
+
+# Leere Liste für die separaten Tabellen
+station_tables <- list()
+
+# Daten für jede Station extrahieren und in separate Tabellen speichern
+for (station in stations) {
+  station_data <- weather_data %>% filter(SDO_Name == station)
+  station_tables[[station]] <- station_data
+}
+# Leere Liste für die kombinierten Vorhersagen
+combined_predictions <- list()
+
+# Für jede Station lineare Regression durchführen und Vorhersagen erstellen
+for (station in stations) {
+  # Daten für die aktuelle Station
+  station_data <- station_tables[[station]]
+  
+  
+  # length.out = 1095 -> 3 Jahre
+  # Lineare Regression für Temperatur
+  lm_temperature <- lm(Temperature ~ Date, data = station_data)
+  future_dates <- seq(as.Date(max(station_data$Date)) + 1,
+                      length.out = 1095, by = "day")
+  future_data <- data.frame(Date = future_dates)
+  predictions_temperature <- predict(lm_temperature, newdata = future_data,
+                                     interval = "prediction")
+  future_data$Predicted_Temperature <- predictions_temperature[, "fit"]
+  future_data$Temperature_Upper <- predictions_temperature[, "upr"]
+  future_data$Temperature_Lower <- predictions_temperature[, "lwr"]
+  
+  # Lineare Regression für Luftfeuchtigkeit
+  lm_humidity <- lm(Humidity ~ Date, data = station_data)
+  predictions_humidity <- predict(lm_humidity, newdata = future_data,
+                                  interval = "prediction")
+  future_data$Predicted_Humidity <- predictions_humidity[, "fit"]
+  future_data$Humidity_Upper <- predictions_humidity[, "upr"]
+  future_data$Humidity_Lower <- predictions_humidity[, "lwr"]
+  
+  # Lineare Regression für Windgeschwindigkeit
+  lm_windspeed <- lm(WindSpeed ~ Date, data = station_data)
+  predictions_windspeed <- predict(lm_windspeed, newdata = future_data,
+                                   interval = "prediction")
+  future_data$Predicted_WindSpeed <- predictions_windspeed[, "fit"]
+  future_data$WindSpeed_Upper <- predictions_windspeed[, "upr"]
+  future_data$WindSpeed_Lower <- predictions_windspeed[, "lwr"]
+  
+  # Station als Spalte hinzufügen
+  future_data$SDO_Name <- station
+  
+  # Ergebnisse zur kombinierten Liste hinzufügen
+  combined_predictions[[station]] <- future_data
+}
+
+# Daten für die letzten 10 Jahre für die Plots
+historical_data <- weather_data
+
+# Für jede Station historische und Vorhersagedaten kombinieren
+combined_data <- lapply(names(combined_predictions), function(station) {
+  historical <- historical_data %>% filter(SDO_Name == station)
+  predicted <- combined_predictions[[station]]
+  combined <- bind_rows(historical, predicted)
+  
+})
+
+# Funktion zur Erstellung des Plots für jede Station
+plot_station_data <- function(data) {
+  ggplot(data, aes(x = Date)) +
+    geom_line(aes(y = Temperature, color = "Temperature"), size = 1) +
+    geom_line(aes(y = Predicted_Temperature, color = "Temperature Prediction"),
+              size = 1, linetype = "dashed") +
+    geom_ribbon(aes(ymin = Temperature_Lower, ymax = Temperature_Upper,
+                    fill = "Temperature Prediction"),
+                alpha = 0.2, color = NA) +
+    geom_line(aes(y = Humidity, color = "Humidity"), size = 1) +
+    geom_line(aes(y = Predicted_Humidity, color = "Humidity Prediction"),
+              size = 1, linetype = "dashed") +
+    geom_ribbon(aes(ymin = Humidity_Lower, ymax = Humidity_Upper,
+                    fill = "Humidity Prediction"), alpha = 0.2, color = NA) +
+    geom_line(aes(y = WindSpeed, color = "WindSpeed"), size = 1) +
+    geom_line(aes(y = Predicted_WindSpeed, color = "WindSpeed Prediction"),
+              size = 1, linetype = "dashed") +
+    geom_ribbon(aes(ymin = WindSpeed_Lower, ymax = WindSpeed_Upper,
+                    fill = "WindSpeed Prediction"), alpha = 0.2, color = NA) +
+    labs(title = paste("Wetterdimensionen - Station:", unique(data$SDO_Name)),
+         x = "Datum", y = "Wert") +
+    scale_color_manual(values = c("Temperature" = "red", "Humidity" = "blue",
+                                  "WindSpeed" = "green",
+                                  "Temperature Prediction" = "red",
+                                  "Humidity Prediction" = "blue",
+                                  "WindSpeed Prediction" = "green"),
+          labels = c("Temperature" = "Temperature",
+                     "Humidity" = "Humidity",
+                     "WindSpeed" = "WindSpeed",
+                     "Temperature Prediction" = "Temperature Prediction",
+                     "Humidity Prediction" = "Humidity Prediction",
+                     "WindSpeed Prediction" = "WindSpeed Prediction")) +
+    scale_fill_manual(values = c("Temperature Prediction" = "red",
+                                 "Humidity Prediction" = "blue",
+                                 "WindSpeed Prediction" = "green"),
+          labels = c("Temperature Prediction" = "Temperature Prediction",
+                     "Humidity Prediction" = "Humidity Prediction",
+                     "WindSpeed Prediction" = "WindSpeed Prediction")) +
+    theme_minimal()
+    
+    
+}
+
+# Plots für jede Station erstellen und anzeigen
+plots <- lapply(combined_data, plot_station_data)
+
+```
+
+```{r}
+
+# Darstellen aller Wettervorhersagen als Plots
+plots
+
+# Die ersten 10 Zeilen der Wettervorhersage von Schönhagen numerisch
+head(combined_predictions[[9]], 10)
+```
